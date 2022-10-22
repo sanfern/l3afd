@@ -11,8 +11,8 @@ require (
 	github.com/rs/zerolog v1.27.0
 	github.com/safchain/ethtool v0.0.0-20210803160452-9aa261dae9b1
 	github.com/swaggo/http-swagger v1.3.0
-	github.com/swaggo/swag v1.8.2
-	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a // exclude
+	github.com/swaggo/swag v1.8.7
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f // exclude
 )
 
 require github.com/golang/mock v1.6.0
@@ -35,8 +35,8 @@ require (
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/swaggo/files v0.0.0-20220610200504-28940afbdbfe // indirect
-	golang.org/x/net v0.0.0-20220526153639-5463443f8c37 // indirect
-	golang.org/x/tools v0.1.10 // indirect
+	golang.org/x/net v0.0.0-20220722155237-a158d28d115b // indirect
+	golang.org/x/tools v0.1.12 // indirect
 	google.golang.org/protobuf v1.26.0-rc.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
