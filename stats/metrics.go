@@ -125,6 +125,7 @@ func SetupMetrics(hostname, daemonName, metricsAddr string) {
 		},
 		[]string{"host", "ebpf_program", "direction", "interface_name"},
 	)
+	BPFDeployFailedCount = BPFDeployFailedCountVec.MustCurryWith(prometheus.Labels{"host": hostname})
 
 	BPFStartCount = bpfStartCountVec.MustCurryWith(prometheus.Labels{"host": hostname})
 	// Prometheus handler
