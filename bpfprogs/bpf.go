@@ -64,7 +64,7 @@ type BPF struct {
 	ProgMapID         ebpf.MapID                // Prog map id
 	PrevProgMapID     ebpf.MapID                // Prev prog map id
 	HostConfig        *config.Config
-	XDPLink           link.Link `json:"-"` // handle xdp link object
+	Link              link.Link `json:"-"` // handle link object
 	ProbeLinks        []*link.Link
 }
 
@@ -129,7 +129,7 @@ func LoadRootProgram(ifaceName string, direction string, progType string, conf *
 			PrevMapNamePath: "",
 			HostConfig:      conf,
 			MapNamePath:     filepath.Join(conf.BpfMapDefaultPath, ifaceName, conf.XDPRootMapName),
-			XDPLink:         nil,
+			Link:            nil,
 		}
 	case models.TCType:
 		rootProgBPF = &BPF{
@@ -189,9 +189,12 @@ func LoadRootProgram(ifaceName string, direction string, progType string, conf *
 			return nil, err
 		}
 	} else if progType == models.TCType {
-		if err := rootProgBPF.LoadTCAttachProgram(ifaceName, direction); err != nil {
-			return nil, fmt.Errorf("failed to load tc root program on iface \"%s\" name %s direction %s with err %w", ifaceName, rootProgBPF.Program.Name, direction, err)
+		if err := rootProgBPF.LoadTCXAttachProgram(ifaceName, direction); err != nil {
+			if err := rootProgBPF.LoadTCAttachProgram(ifaceName, direction); err != nil {
+				return nil, fmt.Errorf("failed to load tc root program on iface \"%s\" name %s direction %s with err %w", ifaceName, rootProgBPF.Program.Name, direction, err)
+			}
 		}
+
 		// pin the program also
 		progPinPath := fmt.Sprintf("%s/progs/%s/%s_%s", rootProgBPF.HostConfig.BpfMapDefaultPath, ifaceName, rootProgBPF.Program.EntryFunctionName, rootProgBPF.Program.ProgType)
 		if err := rootProgBPF.ProgMapCollection.Programs[rootProgBPF.Program.EntryFunctionName].Pin(progPinPath); err != nil {
@@ -939,7 +942,7 @@ func (b *BPF) LoadXDPAttachProgram(ifaceName string) error {
 	if err := b.LoadBPFProgram(ifaceName); err != nil {
 		return err
 	}
-	b.XDPLink, err = link.AttachXDP(link.XDPOptions{
+	b.Link, err = link.AttachXDP(link.XDPOptions{
 		Program:   b.ProgMapCollection.Programs[b.Program.EntryFunctionName],
 		Interface: iface.Index,
 	})
@@ -950,7 +953,50 @@ func (b *BPF) LoadXDPAttachProgram(ifaceName string) error {
 
 	// Pin the Link
 	linkPinPath := fmt.Sprintf("%s/links/%s/%s_%s", b.HostConfig.BpfMapDefaultPath, ifaceName, b.Program.Name, b.Program.ProgType)
-	if err := b.XDPLink.Pin(linkPinPath); err != nil {
+	if err := b.Link.Pin(linkPinPath); err != nil {
+		return err
+	}
+
+	if b.HostConfig.BpfChainingEnabled {
+		if err = b.UpdateProgramMap(ifaceName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LoadTCXAttachProgram - Load and attach xdp root program or any xdp program when chaining is disabled
+func (b *BPF) LoadTCXAttachProgram(ifaceName, direction string) error {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		log.Error().Err(err).Msgf("LoadXDPAttachProgram -look up network iface %q", ifaceName)
+		return err
+	}
+
+	if err := b.LoadBPFProgram(ifaceName); err != nil {
+		return err
+	}
+
+	var attachType ebpf.AttachType
+	if direction == models.IngressType {
+		attachType = ebpf.AttachTCXIngress
+	} else {
+		attachType = ebpf.AttachTCXEgress
+	}
+
+	b.Link, err = link.AttachTCX(link.TCXOptions{
+		Program:   b.ProgMapCollection.Programs[b.Program.EntryFunctionName],
+		Interface: iface.Index,
+		Attach:    attachType,
+	})
+
+	if err != nil {
+		return fmt.Errorf("could not attach tc program %s to interface %s : %w", b.Program.Name, ifaceName, err)
+	}
+
+	// Pin the Link
+	linkPinPath := fmt.Sprintf("%s/links/%s/%s_%s", b.HostConfig.BpfMapDefaultPath, ifaceName, b.Program.Name, b.Program.ProgType)
+	if err := b.Link.Pin(linkPinPath); err != nil {
 		return err
 	}
 
@@ -972,11 +1018,17 @@ func (b *BPF) UnloadProgram(ifaceName, direction string) error {
 	// SeqID will be 0 for root program or any other program without chaining
 	if b.Program.SeqID == 0 || !b.HostConfig.BpfChainingEnabled {
 		if b.Program.ProgType == models.TCType {
-			if err := b.UnloadTCProgram(ifaceName, direction); err != nil {
-				log.Warn().Msgf("removing tc filter failed iface %q direction %s error - %v", ifaceName, direction, err)
+			if b.Link != nil {
+				if err := b.Link.Close(); err != nil {
+					log.Warn().Msgf("removing tc attached program failed iface %q direction %s error - %v", ifaceName, direction, err)
+				}
+			} else {
+				if err := b.UnloadTCProgram(ifaceName, direction); err != nil {
+					log.Warn().Msgf("removing tc filter failed iface %q direction %s error - %v", ifaceName, direction, err)
+				}
 			}
 		} else if b.Program.ProgType == models.XDPType {
-			if err := b.XDPLink.Close(); err != nil {
+			if err := b.Link.Close(); err != nil {
 				log.Warn().Msgf("removing xdp attached program failed iface %q direction %s error - %v", ifaceName, direction, err)
 			}
 		}
@@ -1010,8 +1062,8 @@ func (b *BPF) RemovePinnedFiles(ifaceName string) error {
 		}
 	}
 	// remove pinned links
-	if b.XDPLink != nil {
-		if err := b.XDPLink.Unpin(); err != nil {
+	if b.Link != nil {
+		if err := b.Link.Unpin(); err != nil {
 			return fmt.Errorf("unable to unpin the xdp link for %s with err : %w", b.Program.Name, err)
 		}
 	}
@@ -1376,9 +1428,14 @@ func (b *BPF) AttachBPFProgram(ifaceName, direction string) error {
 			return err
 		}
 	} else if b.Program.ProgType == models.TCType {
-		if err := b.LoadTCAttachProgram(ifaceName, direction); err != nil {
-			return fmt.Errorf("failed to attach tc program %s to inferface %s direction %s with err: %w", b.Program.Name, ifaceName, direction, err)
+		if err := b.LoadTCXAttachProgram(ifaceName, direction); err != nil {
+			if err != nil {
+				if err := b.LoadTCAttachProgram(ifaceName, direction); err != nil {
+					return fmt.Errorf("failed to attach tc program %s to inferface %s direction %s with err: %w", b.Program.Name, ifaceName, direction, err)
+				}
+			}
 		}
+
 		// pin the program also
 		progPinPath := fmt.Sprintf("%s/progs/%s/%s_%s", b.HostConfig.BpfMapDefaultPath, ifaceName, b.Program.EntryFunctionName, b.Program.ProgType)
 		if err := b.ProgMapCollection.Programs[b.Program.EntryFunctionName].Pin(progPinPath); err != nil {
