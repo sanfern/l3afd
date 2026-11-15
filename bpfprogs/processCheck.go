@@ -149,12 +149,12 @@ func (c *PCheck) reloadRootInPlace(root *BPF, firstChildElem *list.Element, ifac
 	// fatal: LoadRootProgram's own CleanStalePins/RemoveRootProgMapFile
 	// handle leftover pins the same way they handle an unclean l3afd crash.
 	if err := root.Stop(ifaceName, (*ifaces)[ifaceName], direction, c.Chain); err != nil {
-		log.Warn().Err(err).Msgf("pMonitorWorker: root program stop before reload failed for program %s, continuing to reload anyway", root.Program.Name)
+		log.Warn().Err(err).Msgf("pMonitorWorker: root program stop before reload failed for program %s, iface %s, ipv4_address %s, continuing to reload anyway", root.Program.Name, ifaceName, (*ifaces)[ifaceName])
 	}
 
 	newRoot, err := LoadRootProgram(ifaceName, direction, progType, root.HostConfig)
 	if err != nil {
-		return fmt.Errorf("failed to reload root program on iface %s direction %s: %w", ifaceName, direction, err)
+		return fmt.Errorf("failed to reload root program %s on iface %s direction %s: %w", root.Program.Name, ifaceName, direction, err)
 	}
 
 	// Copy newRoot's loaded state field-by-field into the existing root
@@ -180,6 +180,7 @@ func (c *PCheck) reloadRootInPlace(root *BPF, firstChildElem *list.Element, ifac
 
 	if firstChildElem == nil {
 		// Root is the only program in the chain; nothing left to relink.
+		// This should not happen but for pre-caution
 		return nil
 	}
 	firstChild := firstChildElem.Value.(*BPF)
