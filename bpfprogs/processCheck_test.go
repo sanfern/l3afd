@@ -196,6 +196,55 @@ func TestDeployingFlagSkipsProbeMonitorRestart(t *testing.T) {
 	}
 }
 
+// TestDeployingFlagSkipsMonitorRestart_RootSeqID is the SeqID==0 (root)
+// variant of TestDeployingFlagSkipsMonitorRestart: root is now restarted via
+// the same guarded block as every other program (see pMonitorWorker's isRoot
+// branch), so it must honor the same Deploying/RestartCount guards. The
+// kernel-touching reload+relink itself (reloadRootInPlace) can't be unit
+// tested without a real interface and eBPF programs - consistent with
+// Stop/Start not being unit tested for non-root programs either - so this
+// only covers that the guard inputs feeding into "is this root a restart
+// candidate" behave the same for SeqID 0 as for any other program.
+func TestDeployingFlagSkipsMonitorRestart_RootSeqID(t *testing.T) {
+	root := &BPF{
+		Program: models.BPFProgram{
+			Name:        "xdp-root",
+			SeqID:       0,
+			AdminStatus: models.Enabled,
+		},
+		RestartCount: 0,
+	}
+	c := &PCheck{MaxRetryCount: 5}
+
+	checkAndMaybeRestart := func() {
+		if root.Program.AdminStatus == models.Disabled {
+			return
+		}
+		if root.Deploying.Load() {
+			return
+		}
+		_, bpfLoaded, _ := root.isRunning()
+		if !bpfLoaded &&
+			root.RestartCount < c.MaxRetryCount &&
+			root.Program.AdminStatus == models.Enabled {
+			root.RestartCount++
+		}
+	}
+
+	root.Deploying.Store(true)
+	checkAndMaybeRestart()
+	checkAndMaybeRestart()
+	if root.RestartCount != 0 {
+		t.Errorf("Deploying=true: RestartCount = %d, want 0", root.RestartCount)
+	}
+
+	root.Deploying.Store(false)
+	checkAndMaybeRestart()
+	if root.RestartCount != 1 {
+		t.Errorf("Deploying=false: RestartCount = %d, want 1", root.RestartCount)
+	}
+}
+
 // TestDeployingFlagRace is a data-race detector test for the concurrent access
 // to BPF.ProgID between the deploy goroutine (writer) and pMonitor (reader via
 // IsLoaded). Run with: go test -race ./bpfprogs/...

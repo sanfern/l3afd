@@ -51,6 +51,13 @@ type NFConfigs struct {
 	Ifaces map[string]string
 
 	Mu *sync.RWMutex
+
+	// TCRestartMu serializes restarts between ingress-TC and egress-TC: TC map
+	// pin paths (models.TCMapPinPath) don't include direction, so a program
+	// chained into both directions shares the same pinned maps. The two
+	// workers only RLock progs.Mu, so without this they could restart that
+	// program concurrently and corrupt/orphan the shared map pin.
+	TCRestartMu *sync.Mutex
 }
 
 // BpfProgSet bundles the chained BPF program lists together with the shared
@@ -67,18 +74,21 @@ type BpfProgSet struct {
 	Probes     *list.List
 	Ifaces     *map[string]string
 	Mu         *sync.RWMutex
+	// TCRestartMu - see NFConfigs.TCRestartMu.
+	TCRestartMu *sync.Mutex
 }
 
 // AsBpfProgSet returns a snapshot view of c's chained BPF program data for
 // use by monitor subsystems (PCheck.PCheckStart, BpfMetrics.BpfMetricsStart).
 func (c *NFConfigs) AsBpfProgSet() *BpfProgSet {
 	return &BpfProgSet{
-		IngressXDP: c.IngressXDPBpfs,
-		IngressTC:  c.IngressTCBpfs,
-		EgressTC:   c.EgressTCBpfs,
-		Probes:     &c.ProbesBpfs,
-		Ifaces:     &c.Ifaces,
-		Mu:         c.Mu,
+		IngressXDP:  c.IngressXDPBpfs,
+		IngressTC:   c.IngressTCBpfs,
+		EgressTC:    c.EgressTCBpfs,
+		Probes:      &c.ProbesBpfs,
+		Ifaces:      &c.Ifaces,
+		Mu:          c.Mu,
+		TCRestartMu: c.TCRestartMu,
 	}
 }
 
@@ -91,6 +101,7 @@ func NewNFConfigs(ctx context.Context, host string, hostConf *config.Config, pMo
 		IngressTCBpfs:  make(map[string]*list.List),
 		EgressTCBpfs:   make(map[string]*list.List),
 		Mu:             new(sync.RWMutex),
+		TCRestartMu:    new(sync.Mutex),
 		Ifaces:         make(map[string]string),
 	}
 
