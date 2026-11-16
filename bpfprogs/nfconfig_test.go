@@ -171,15 +171,12 @@ func TestNewNFConfigs(t *testing.T) {
 				t.Errorf("NewNFConfigs() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			// NewNFConfigs hands got.Mu to ProcessMon.PCheckStart/BpfMetricsMon.BpfMetricsStart,
-			// which immediately spawn monitor goroutines that RLock/RUnlock it in a tight loop
-			// (setupDBTest's pMon uses a 10ns ticker). Comparing against a separately allocated
-			// new(sync.RWMutex) races on that mutex's internal state (e.g. readerCount) and is
-			// flaky under reflect.DeepEqual. Point want at the same *sync.RWMutex got received so
-			// the pointer-identity short-circuit in DeepEqual applies instead of dereferencing a
-			// mutex that's concurrently being locked out from under the test.
+			// Monitor goroutines Lock/RLock these mutexes in a tight loop (10ns ticker),
+			// so comparing against separately allocated mutexes via DeepEqual is flaky.
+			// Point want at got's instances for DeepEqual's pointer-identity short-circuit.
 			if got != nil {
 				tt.want.Mu = got.Mu
+				tt.want.TCRestartMu = got.TCRestartMu
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NewNFConfigs() = %#v, want %#v", got, tt.want)
